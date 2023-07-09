@@ -18,14 +18,25 @@ import java.util.List;
 
 import static java.nio.charset.StandardCharsets.*;
 
+/**
+ * Enforcing 4,096 token limit for gpt-3.5-turbo.
+ *
+ * @see <a href="https://platform.openai.com/docs/models/gpt-3-5"/>
+ * @see <a href="https://github.com/knuddelsgmbh/jtokkit"/>
+ */
 public class Chat
 {
     private static final Logger LOG = LoggerFactory.getLogger(Chat.class);
 
-    private static final String EMB_MODEL = "text-embedding-ada-002";
+    private static final String OPENAI_API_KEY = System.getenv("OPENAI_API_KEY");
+    private static final String OPENAI_CHAT_MODEL = "gpt-3.5-turbo";
+    private static final int OPENAI_CHAT_MODEL_MAX_TOKEN = 4096;
+    private static final String OPENAI_EMB_MODEL = "text-embedding-ada-002";
 
-    private static final boolean USE_EMBEDDINGS =
-            "true".equals(System.getenv("USE_EMBEDDINGS"));
+    private static final EncodingRegistry registry =
+            Encodings.newDefaultEncodingRegistry();
+    private static final Encoding tokenEncoder =
+            registry.getEncodingForModel(ModelType.GPT_3_5_TURBO);
 
     private static final String PG_URL =
             System.getenv("PG_URL") != null
@@ -40,22 +51,16 @@ public class Chat
                     ? System.getenv("PG_PSW")
                     : "quests";
 
-    private static final EncodingRegistry registry =
-            Encodings.newDefaultEncodingRegistry();
-    private static final Encoding tokenEncoder =
-            registry.getEncodingForModel(ModelType.GPT_3_5_TURBO);
-    private static final int MAX_TOKENS = 4096;
-
     public static void main(String[] args)
     throws Exception {
         BufferedReader reader =
                 new BufferedReader(new InputStreamReader(System.in));
+        System.out.println("Hit Ctrl-D to exit, enjoy!");
         while (true) {
             System.out.print("> ");
             String prompt = reader.readLine();
             if (prompt != null) {
-                String response = askOpenAi(System.getenv("OPENAI_API_KEY"),
-                        prompt, "gpt-3.5-turbo");
+                String response = askOpenAi(prompt);
                 System.out.println("Model> " + response);
             } else {
                 System.out.println("Bye");
@@ -64,60 +69,50 @@ public class Chat
         }
     }
 
-    public static String askOpenAi(
-            String apiKey,
-            String prompt,
-            String model
-    )
+    public static String askOpenAi(String prompt)
     throws Exception {
-        if (USE_EMBEDDINGS) {
-            List<OpenAiMessage> messages =
-                augmentPrompt(
-                    apiKey,
-                    prompt);
-            try (Jsonb jsonb = Json.jsonb()) {
-                String messagesJson = jsonb.toJson(messages);
-                String json = String.format(
-                        """
-                                {
-                                    "model": "%s",
-                                    "messages": %s,
-                                    "temperature": 0.7
-                                }
-                                """,
-                        model,
-                        messagesJson);
-                LOG.info("Sending:\n" + json);
-                String completion = chatCompletion(
-                        apiKey,
-                        json);
-                OpenAiEmbedding embedding =
-                        embed(apiKey, completion);
-                saveUniquePrompt("system", completion, embedding);
-                return completion;
-            }
-        } else {
-            return chatCompletion(
-                    apiKey,
-                    String.format(
-                            """
-                            {
-                                "model": "%s",
-                                "messages": [{"role": "user", "content": "%s"}],
-                                "temperature": 0.7
-                            }
-                            """,
-                            model,
-                            prompt
-                    )
-            );
+        Prompt promptEmbedding = embed(prompt);
+        List<OpenAiMessage> similarPrompts = semanticSearch(promptEmbedding);
+        saveUniquePrompt("user", promptEmbedding);
+        List<OpenAiMessage> messages =
+                addPromptEnforcingLimit(similarPrompts, prompt);
+
+        try (Jsonb jsonb = Json.jsonb()) {
+            String json = String.format(
+                    """
+                    {
+                        "model": "%s",
+                        "messages": %s,
+                        "temperature": 0.7
+                    }
+                    """,
+                    OPENAI_CHAT_MODEL,
+                    jsonb.toJson(messages));
+            String completion = chatCompletion(json);
+            Prompt completionEmbedding = embed(completion);
+            saveUniquePrompt("system", completionEmbedding);
+            return completion;
         }
     }
 
-    private static String chatCompletion(
-            String apiKey,
-            String json
-    )
+    private static List<OpenAiMessage> addPromptEnforcingLimit(
+            List<OpenAiMessage> similarPrompts,
+            String prompt
+    ) {
+        List<OpenAiMessage> messages = new ArrayList<>();
+        int tot = tokenEncoder.countTokens(prompt);
+        for (OpenAiMessage msg : similarPrompts) {
+            int count = tokenEncoder.countTokens(msg.content());
+            if (tot + count < OPENAI_CHAT_MODEL_MAX_TOKEN) {
+                messages.add(msg);
+                tot += count;
+            }
+        }
+        messages.add(new OpenAiMessage("user", prompt));
+        return messages;
+    }
+
+    private static String chatCompletion(String json)
     throws Exception {
         URL url = new URL("https://api.openai.com/v1/chat/completions");
         HttpURLConnection con = (HttpURLConnection) url.openConnection();
@@ -125,11 +120,11 @@ public class Chat
         con.setRequestMethod("POST");
         con.setRequestProperty("Content-Type", "application/json");
         con.setRequestProperty("Accept", "application/json");
-        con.setRequestProperty("Authorization", "Bearer " + apiKey);
+        con.setRequestProperty("Authorization", "Bearer " + OPENAI_API_KEY);
         con.setConnectTimeout(300_000);
         con.setReadTimeout(300_000);
         try (OutputStream os = con.getOutputStream()) {
-            LOG.debug("Sending JSON:\n" + json);
+            LOG.debug("Sending JSON to chat completion API:\n" + json);
             byte[] bytes = json.getBytes(UTF_8);
             os.write(bytes, 0, bytes.length);
         }
@@ -142,43 +137,9 @@ public class Chat
         }
     }
 
-    /**
-     * Enforcing 4,096 token limit for gpt-3.5-turbo
-     * @see <a href="https://platform.openai.com/docs/models/gpt-3-5"/>
-     * @see <a href="https://github.com/knuddelsgmbh/jtokkit"/>
-     */
-    private static List<OpenAiMessage> augmentPrompt(
-            String apiKey,
-            String prompt
-    )
-    throws Exception {
-        OpenAiEmbedding promptEmbedding = embed(apiKey, prompt);
-        List<OpenAiMessage> similarPrompts = semanticSearch(promptEmbedding);
-        saveUniquePrompt("user", prompt, promptEmbedding);
-        return addPromptAndEnforceLimit(similarPrompts, prompt);
-    }
-
-    private static List<OpenAiMessage> addPromptAndEnforceLimit(
-            List<OpenAiMessage> similarPrompts,
-            String prompt
-    ) {
-        List<OpenAiMessage> messages = new ArrayList<>();
-        int tot = tokenEncoder.countTokens(prompt);
-        for (OpenAiMessage msg : similarPrompts) {
-            int count = tokenEncoder.countTokens(msg.content());
-            if (tot + count < MAX_TOKENS) {
-                messages.add(msg);
-                tot += count;
-            }
-        }
-        messages.add(new OpenAiMessage("user", prompt));
-        return messages;
-    }
-
-    public static void saveUniquePrompt(
+    private static void saveUniquePrompt(
             String role,
-            String prompt,
-            OpenAiEmbedding embedding
+            Prompt prompt
     )
     throws SQLException {
         try (Connection conn = DriverManager.getConnection(
@@ -193,7 +154,7 @@ public class Chat
                      values (?, ?, ?)
                      """)
         ) {
-            find.setString(1, prompt);
+            find.setString(1, prompt.value());
             ResultSet rs = find.executeQuery();
             rs.next();
             int count = rs.getInt(1);
@@ -201,8 +162,8 @@ public class Chat
                 return;
 
             insert.setString(1, role);
-            insert.setString(2, prompt);
-            float[] floats = toFloatArray(embedding);
+            insert.setString(2, prompt.value());
+            float[] floats = toFloatArray(prompt.embeddings());
             insert.setObject(3, new PGvector(floats));
             insert.execute();
         }
@@ -217,7 +178,7 @@ public class Chat
                 .trim();
     }
 
-    private static List<OpenAiMessage> semanticSearch(OpenAiEmbedding e)
+    private static List<OpenAiMessage> semanticSearch(Prompt e)
     throws SQLException {
         try (Connection conn = DriverManager.getConnection(
                 PG_URL, PG_USER, PG_PSW);
@@ -229,7 +190,7 @@ public class Chat
                      limit 100
                      """)
         ) {
-            float[] floats = toFloatArray(e);
+            float[] floats = toFloatArray(e.embeddings());
             ps.setObject(1, new PGvector(floats));
             ps.setObject(2, new PGvector(floats));
             ResultSet rs = ps.executeQuery();
@@ -238,32 +199,29 @@ public class Chat
                 String role = rs.getString(1);
                 String prompt = rs.getString(2);
                 float dist = rs.getFloat(3);
-                LOG.info(String.format("distance %f - %s\n", dist, prompt));
+                LOG.debug(String.format("Distance %f - %s\n", dist, prompt));
                 messages.add(new OpenAiMessage(role, prompt));
             }
             return messages;
         }
     }
 
-    private static float[] toFloatArray(OpenAiEmbedding e) {
-        float[] floats = new float[e.embeddings().size()];
-        for (int i = 0; i < e.embeddings().size(); i++) {
-            floats[i] = e.embeddings().get(i);
+    private static float[] toFloatArray(List<Float> floatObjects) {
+        float[] floats = new float[floatObjects.size()];
+        for (int i = 0; i < floatObjects.size(); i++) {
+            floats[i] = floatObjects.get(i);
         }
         return floats;
     }
 
-    public static OpenAiEmbedding embed(
-            String apiKey,
-            String value
-    ) throws Exception {
+    private static Prompt embed(String value) throws Exception {
         URL url = new URL("https://api.openai.com/v1/embeddings");
         HttpURLConnection con = (HttpURLConnection) url.openConnection();
         con.setDoOutput(true);
         con.setRequestMethod("POST");
         con.setRequestProperty("Content-Type", "application/json");
         con.setRequestProperty("Accept", "application/json");
-        con.setRequestProperty("Authorization", "Bearer " + apiKey);
+        con.setRequestProperty("Authorization", "Bearer " + OPENAI_API_KEY);
         con.setConnectTimeout(300_000);
         con.setReadTimeout(300_000);
         try (OutputStream os = con.getOutputStream()) {
@@ -272,8 +230,8 @@ public class Chat
                         "model": "%s",
                         "input": "%s"
                     }
-                    """, EMB_MODEL, clean(value));
-            LOG.debug("Sending JSON:\n" + json);
+                    """, OPENAI_EMB_MODEL, clean(value));
+            LOG.debug("Sending JSON to embeddings API:\n" + json);
             byte[] bytes = json.getBytes(UTF_8);
             os.write(bytes, 0, bytes.length);
         }
@@ -285,7 +243,7 @@ public class Chat
                     jsonb.fromJson(res, OpenAiEmbeddingsResponse.class);
             OpenAiEmbeddingResponse emb =
                     resp.data().get(0);
-            return new OpenAiEmbedding(emb.embedding());
+            return new Prompt(value, emb.embedding());
         }
     }
 }
