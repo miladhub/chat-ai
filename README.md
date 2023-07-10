@@ -78,6 +78,8 @@ Define the `OPENAI_API_KEY` environment variable and run the JAR:
 ```shell
 $ export OPENAI_API_KEY=your-api-key
 $ java -jar target/chat-ai-*-jar-with-dependencies.jar
+Hit Ctrl-D to exit, enjoy!
+> 
 ```
 
 # Running the DB elsewhere

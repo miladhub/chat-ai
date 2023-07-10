@@ -72,27 +72,15 @@ public class Chat
     public static String askOpenAi(String prompt)
     throws Exception {
         Prompt promptEmbedding = embed(prompt);
-        List<OpenAiMessage> similarPrompts = semanticSearch(promptEmbedding);
+        List<OpenAiMessage> similarPrompts = semanticSearch(
+                promptEmbedding.embeddings());
         saveUniquePrompt("user", promptEmbedding);
         List<OpenAiMessage> messages =
                 addPromptEnforcingLimit(similarPrompts, prompt);
-
-        try (Jsonb jsonb = Json.jsonb()) {
-            String json = String.format(
-                    """
-                    {
-                        "model": "%s",
-                        "messages": %s,
-                        "temperature": 0.7
-                    }
-                    """,
-                    OPENAI_CHAT_MODEL,
-                    jsonb.toJson(messages));
-            String completion = chatCompletion(json);
-            Prompt completionEmbedding = embed(completion);
-            saveUniquePrompt("system", completionEmbedding);
-            return completion;
-        }
+        String completion = chatCompletion(messages);
+        Prompt completionEmbedding = embed(completion);
+        saveUniquePrompt("system", completionEmbedding);
+        return completion;
     }
 
     private static List<OpenAiMessage> addPromptEnforcingLimit(
@@ -112,28 +100,38 @@ public class Chat
         return messages;
     }
 
-    private static String chatCompletion(String json)
+    private static String chatCompletion(List<OpenAiMessage> messages)
     throws Exception {
-        URL url = new URL("https://api.openai.com/v1/chat/completions");
-        HttpURLConnection con = (HttpURLConnection) url.openConnection();
-        con.setDoOutput(true);
-        con.setRequestMethod("POST");
-        con.setRequestProperty("Content-Type", "application/json");
-        con.setRequestProperty("Accept", "application/json");
-        con.setRequestProperty("Authorization", "Bearer " + OPENAI_API_KEY);
-        con.setConnectTimeout(300_000);
-        con.setReadTimeout(300_000);
-        try (OutputStream os = con.getOutputStream()) {
-            LOG.debug("Sending JSON to chat completion API:\n" + json);
-            byte[] bytes = json.getBytes(UTF_8);
-            os.write(bytes, 0, bytes.length);
-        }
-        try (InputStream is = con.getInputStream();
-             Jsonb jsonb = Json.jsonb()
-        ) {
-            String res = new String(is.readAllBytes(), UTF_8);
-            OpenAiResponse resp = jsonb.fromJson(res, OpenAiResponse.class);
-            return resp.choices().get(0).message().content();
+        try (Jsonb jsonb = Json.jsonb()) {
+            String json = String.format(
+                    """
+                    {
+                        "model": "%s",
+                        "messages": %s,
+                        "temperature": 0.7
+                    }
+                    """,
+                    OPENAI_CHAT_MODEL,
+                    jsonb.toJson(messages));
+            URL url = new URL("https://api.openai.com/v1/chat/completions");
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            con.setDoOutput(true);
+            con.setRequestMethod("POST");
+            con.setRequestProperty("Content-Type", "application/json");
+            con.setRequestProperty("Accept", "application/json");
+            con.setRequestProperty("Authorization", "Bearer " + OPENAI_API_KEY);
+            con.setConnectTimeout(300_000);
+            con.setReadTimeout(300_000);
+            try (OutputStream os = con.getOutputStream()) {
+                LOG.debug("Sending JSON to chat completion API:\n" + json);
+                byte[] bytes = json.getBytes(UTF_8);
+                os.write(bytes, 0, bytes.length);
+            }
+            try (InputStream is = con.getInputStream()) {
+                String res = new String(is.readAllBytes(), UTF_8);
+                OpenAiResponse resp = jsonb.fromJson(res, OpenAiResponse.class);
+                return resp.choices().get(0).message().content();
+            }
         }
     }
 
@@ -154,7 +152,7 @@ public class Chat
                      values (?, ?, ?)
                      """)
         ) {
-            find.setString(1, prompt.value());
+            find.setString(1, prompt.contents());
             ResultSet rs = find.executeQuery();
             rs.next();
             int count = rs.getInt(1);
@@ -162,7 +160,7 @@ public class Chat
                 return;
 
             insert.setString(1, role);
-            insert.setString(2, prompt.value());
+            insert.setString(2, prompt.contents());
             float[] floats = toFloatArray(prompt.embeddings());
             insert.setObject(3, new PGvector(floats));
             insert.execute();
@@ -178,7 +176,7 @@ public class Chat
                 .trim();
     }
 
-    private static List<OpenAiMessage> semanticSearch(Prompt e)
+    private static List<OpenAiMessage> semanticSearch(List<Float> embeddings)
     throws SQLException {
         try (Connection conn = DriverManager.getConnection(
                 PG_URL, PG_USER, PG_PSW);
@@ -190,7 +188,7 @@ public class Chat
                      limit 100
                      """)
         ) {
-            float[] floats = toFloatArray(e.embeddings());
+            float[] floats = toFloatArray(embeddings);
             ps.setObject(1, new PGvector(floats));
             ps.setObject(2, new PGvector(floats));
             ResultSet rs = ps.executeQuery();
