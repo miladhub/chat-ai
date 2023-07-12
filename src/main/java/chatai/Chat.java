@@ -60,8 +60,7 @@ public class Chat
                 Hit Ctrl-D to exit.
                 To save or update context entries, type:
                 :context (save|delete) <entry-name> [<entry-value>]
-                Enjoy!
-                """);
+                Enjoy!""");
         while (true) {
             System.out.print("> ");
             String prompt = reader.readLine();
