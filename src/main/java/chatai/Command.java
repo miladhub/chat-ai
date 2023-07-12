@@ -1,6 +1,6 @@
 package chatai;
 
-public enum ContextCommand
+public enum Command
 {
     save,
     delete

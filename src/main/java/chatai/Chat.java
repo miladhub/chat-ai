@@ -1,5 +1,7 @@
 package chatai;
 
+import chatai.ChatResponse.FunctionCallChatResponse;
+import chatai.ChatResponse.MessageChatResponse;
 import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingRegistry;
@@ -12,9 +14,11 @@ import javax.json.bind.Jsonb;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.file.Files;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static java.nio.charset.StandardCharsets.*;
 
@@ -23,6 +27,8 @@ import static java.nio.charset.StandardCharsets.*;
  *
  * @see <a href="https://platform.openai.com/docs/models/gpt-3-5"/>
  * @see <a href="https://github.com/knuddelsgmbh/jtokkit"/>
+ * @see <a href="https://help.openai.com/en/articles/7042661-chatgpt-api-transition-guide/>
+ * @see <a href="https://platform.openai.com/docs/guides/gpt/function-calling"/>
  */
 public class Chat
 {
@@ -60,6 +66,8 @@ public class Chat
                 Hit Ctrl-D to exit.
                 To save or update context entries, type:
                 :context (save|delete) <entry-name> [<entry-value>]
+                To save or update functions, type:
+                :context (save|delete) <fn-name> [<fn-descr> <fn-params-json-schema-file>]
                 Enjoy!""");
         while (true) {
             System.out.print("> ");
@@ -67,13 +75,20 @@ public class Chat
             if (prompt != null) {
                 if (prompt.startsWith(":context ")) {
                     String[] context = prompt.split("\s+", 4);
-                    processContext(
-                            ContextCommand.valueOf(context[1]),
+                    updateContext(
+                            Command.valueOf(context[1]),
                             context[2],
                             context.length >= 4? context[3] : null);
                     System.out.println("Model> context updated.");
+                } else if (prompt.startsWith(":function ")) {
+                    String[] function = prompt.split("\s+", 4);
+                    updateFunction(
+                            Command.valueOf(function[1]),
+                            function[2],
+                            function.length >= 4? function[3] : null);
+                    System.out.println("Model> function  updated.");
                 } else {
-                    String response = askAsUser(prompt);
+                    String response = askCompletion(prompt);
                     System.out.println("Model> " + response);
                 }
             } else {
@@ -83,7 +98,7 @@ public class Chat
         }
     }
 
-    public static String askAsUser(String prompt)
+    public static String askCompletion(String prompt)
     throws Exception {
         Embedding promptEmb = embed(prompt);
         saveMessage(new Message(Role.user, prompt), promptEmb);
@@ -91,15 +106,44 @@ public class Chat
         List<Message> similarMessages = semanticSearch(prompt, promptEmb);
         List<Message> ctx = contextMessages();
         List<Message> messages = composeMessages(similarMessages, ctx, prompt);
-        String completion = chatCompletion(messages);
-        Embedding completionEmb = embed(completion);
-        saveMessage(new Message(Role.assistant, completion), completionEmb);
+        List<ModelFunction> functions = functions();
+        ChatResponse response = chatCompletion(messages, functions);
 
-        return completion;
+        switch (response) {
+            case MessageChatResponse msg -> {
+                Embedding completionEmb = embed(msg.content());
+                saveMessage(new Message(Role.assistant, msg.content()), completionEmb);
+                return msg.content();
+            }
+            case FunctionCallChatResponse fn -> {
+                return fn.name() + "( " + fn.arguments() + " )";
+            }
+            default -> throw new IllegalStateException();
+        }
     }
 
-    public static void processContext(
-            ContextCommand command,
+    private static List<ModelFunction> functions()
+    throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                PG_URL, PG_USER, PG_USER);
+             PreparedStatement select = conn.prepareStatement(
+                     """
+                     select name, body from model_functions
+                     """)
+        ) {
+            ResultSet rs = select.executeQuery();
+            List<ModelFunction> messages = new ArrayList<>();
+            while (rs.next()) {
+                String name = rs.getString(1);
+                String body = rs.getString(2);
+                messages.add(new ModelFunction(name, body));
+            }
+            return messages;
+        }
+    }
+
+    public static void updateContext(
+            Command command,
             String name,
             String value
     )
@@ -110,8 +154,20 @@ public class Chat
         }
     }
 
-    // TODO add all context messages
-    //  https://help.openai.com/en/articles/7042661-chatgpt-api-transition-guide
+    public static void updateFunction(
+            Command command,
+            String name,
+            String bodyFile
+    )
+    throws Exception {
+        switch (command) {
+            case save -> {
+                String body = Files.readString(new File(bodyFile).toPath());
+                saveFunction(new ModelFunction(name, body));
+            }
+            case delete -> deleteFunction(name);
+        }
+    }
 
     private static List<Message> composeMessages(
             List<Message> similarPrompts,
@@ -122,7 +178,8 @@ public class Chat
         int promptTokens = tokenEncoder.countTokens(prompt);
         int contextTokens = context.stream()
                 .map(Message::content)
-                .mapToInt(String::length).sum();
+                .mapToInt(tokenEncoder::countTokens)
+                .sum();
         int tot = promptTokens + contextTokens;
         for (Message msg : similarPrompts) {
             int count = tokenEncoder.countTokens(msg.content());
@@ -135,19 +192,13 @@ public class Chat
         return messages;
     }
     
-    private static String chatCompletion(List<Message> messages)
+    private static ChatResponse chatCompletion(
+            List<Message> messages,
+            List<ModelFunction> functions
+    )
     throws Exception {
         try (Jsonb jsonb = Json.jsonb()) {
-            String json = String.format(
-                    """
-                    {
-                        "model": "%s",
-                        "messages": %s,
-                        "temperature": 0.7
-                    }
-                    """,
-                    OPENAI_CHAT_MODEL,
-                    jsonb.toJson(messages));
+            String json = toJson(messages, functions);
             URL url = new URL("https://api.openai.com/v1/chat/completions");
             HttpURLConnection con = (HttpURLConnection) url.openConnection();
             con.setDoOutput(true);
@@ -165,7 +216,49 @@ public class Chat
             try (InputStream is = con.getInputStream()) {
                 String res = new String(is.readAllBytes(), UTF_8);
                 OpenAiResponse resp = jsonb.fromJson(res, OpenAiResponse.class);
-                return resp.choices().get(0).message().content();
+                OpenAiMessage msg = resp.choices().get(0).message();
+                if (msg.function_call() != null)
+                    return new FunctionCallChatResponse(
+                            msg.function_call().name(),
+                            msg.function_call().arguments()
+                    );
+                else return new MessageChatResponse(msg.content());
+            }
+        }
+    }
+
+    private static String toJson(
+            List<Message> messages,
+            List<ModelFunction> functions
+    )
+    throws Exception {
+        try (Jsonb jsonb = Json.jsonb()) {
+            if (functions.isEmpty()) {
+                return String.format(
+                        """
+                        {
+                            "model": "%s",
+                            "messages": %s,
+                            "temperature": 0.7
+                        }
+                        """,
+                        OPENAI_CHAT_MODEL,
+                        jsonb.toJson(messages));
+            } else {
+                return String.format(
+                        """
+                        {
+                            "model": "%s",
+                            "messages": %s,
+                            "functions": %s,
+                            "temperature": 0.7
+                        }
+                        """,
+                        OPENAI_CHAT_MODEL,
+                        jsonb.toJson(messages),
+                        "[" + functions.stream()
+                                .map(ModelFunction::body)
+                                .collect(Collectors.joining(",\n")) + "]");
             }
         }
     }
@@ -233,6 +326,39 @@ public class Chat
              PreparedStatement delete = conn.prepareStatement(
                      """
                      delete from contexts
+                     where name = ?
+                     """)
+        ) {
+            delete.setString(1, name);
+            delete.execute();
+        }
+    }
+
+    private static void saveFunction(ModelFunction fn)
+    throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                PG_URL, PG_USER, PG_USER);
+             PreparedStatement insert = conn.prepareStatement(
+                     """
+                     insert into model_functions (name, body)
+                     values(?, ?::jsonb)
+                     on conflict (name) do update set body = ?::jsonb
+                     """)
+        ) {
+            insert.setString(1, fn.name());
+            insert.setString(2, fn.body());
+            insert.setString(3, fn.body());
+            insert.execute();
+        }
+    }
+
+    private static void deleteFunction(String name)
+    throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                PG_URL, PG_USER, PG_USER);
+             PreparedStatement delete = conn.prepareStatement(
+                     """
+                     delete from model_functions
                      where name = ?
                      """)
         ) {

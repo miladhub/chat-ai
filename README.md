@@ -62,6 +62,12 @@ chat=> create table contexts (
   value varchar(400) not null
 );
 CREATE TABLE
+chat=> create table model_functions (
+  id bigserial PRIMARY KEY,
+  name varchar(100) UNIQUE,
+  body json not null
+);
+CREATE TABLE
 ```
 
 To delete all past interactions:
