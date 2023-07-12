@@ -92,7 +92,7 @@ Define the `OPENAI_API_KEY` environment variable and run the JAR:
 
 ```shell
 $ export OPENAI_API_KEY=your-api-key
-$ java -jar target/chat-ai-*-jar-with-dependencies.jar
+$ java --enable-preview -jar target/chat-ai-*-jar-with-dependencies.jar
 Hit Ctrl-D to exit.
 To save or update context entries, type:
 :context (save|delete) <entry-name> [<entry-value>]
@@ -104,6 +104,29 @@ Model> As the Dungeon Master, it is up to you to create and control the world an
 You have the power to shape the story and guide the players through their adventures.
 Your role is to describe the environments, non-player characters, and to facilitate the progression of the game.
 So, in this case, you are the one orchestrating the game and playing all the other characters besides FizzBuzz.
+> 
+```
+
+Example of using functions:
+
+```shell
+> :function save update_characters_stats update_characters_stats.json
+Model> function  updated.
+> make it so that Duncan gets a bit hurt
+Model> update_characters_stats( {
+  "changes": [
+    {
+      "stat": "hp",
+      "delta": -5,
+      "character": "Duncan"
+    },
+    {
+      "stat": "stamina",
+      "delta": -2,
+      "character": "Duncan"
+    }
+  ]
+} )
 > 
 ```
 

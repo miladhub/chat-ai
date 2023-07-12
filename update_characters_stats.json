@@ -1,0 +1,33 @@
+{
+    "name": "update_characters_stats",
+    "description": "Update one or more characters stats",
+    "parameters":
+    {
+      "type": "object",
+      "properties": {
+        "changes" : {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "character": {
+                "type": "string",
+                "description": "The name of the character, for example, Duncan"
+              },
+              "stat": {
+                "type": "string",
+                "description": "The name of the stat",
+                "enum": ["hp", "stamina"]
+              },
+              "delta": {
+                "type": "number",
+                "description": "The amount to be algebraically amount of the stat (it can be also negative)"
+              }
+            },
+            "required": ["character", "stat", "value"]
+          }
+        }
+      },
+      "required": ["changes"]
+    }
+}
