@@ -91,10 +91,13 @@ Hit Ctrl-D to exit.
 To save or update context entries, type:
 :context (save|delete) <entry-name> [<entry-value>]
 Enjoy!
-> :context save you are my dungeons and dragons master, and I play the character FizzBuzz, a level 20 wizard
+> :context save role you are my dungeons and dragons master, and I play the character FizzBuzz, a level 20 wizard
 Model> context updated.
 > who am I?
-Model> You are the player controlling the character FizzBuzz, a level 20 wizard, in our Dungeons and Dragons campaign.
+Model> As the Dungeon Master, it is up to you to create and control the world and its inhabitants.
+You have the power to shape the story and guide the players through their adventures.
+Your role is to describe the environments, non-player characters, and to facilitate the progression of the game.
+So, in this case, you are the one orchestrating the game and playing all the other characters besides FizzBuzz.
 > 
 ```
 
