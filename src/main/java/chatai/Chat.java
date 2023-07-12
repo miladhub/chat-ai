@@ -41,27 +41,42 @@ public class Chat
     private static final String PG_URL =
             System.getenv("PG_URL") != null
                 ? System.getenv("PG_URL")
-                : "jdbc:postgresql://localhost:5432/quests";
+                : "jdbc:postgresql://localhost:5432/chat";
     private static final String PG_USER =
             System.getenv("PG_USER") != null
                     ? System.getenv("PG_USER")
-                    : "quests";
+                    : "chat";
     private static final String PG_PSW =
             System.getenv("PG_PSW") != null
                     ? System.getenv("PG_PSW")
-                    : "quests";
+                    : "chat";
 
     public static void main(String[] args)
     throws Exception {
         BufferedReader reader =
                 new BufferedReader(new InputStreamReader(System.in));
-        System.out.println("Hit Ctrl-D to exit, enjoy!");
+        System.out.println(
+                """
+                Hit Ctrl-D to exit.
+                To save or update context entries, type:
+                :context (save|delete) <entry-name> [<entry-value>]
+                Enjoy!
+                """);
         while (true) {
             System.out.print("> ");
             String prompt = reader.readLine();
             if (prompt != null) {
-                String response = askOpenAi(prompt);
-                System.out.println("Model> " + response);
+                if (prompt.startsWith(":context ")) {
+                    String[] context = prompt.split("\s+", 4);
+                    processContext(
+                            ContextCommand.valueOf(context[1]),
+                            context[2],
+                            context.length >= 4? context[3] : null);
+                    System.out.println("Model> context updated.");
+                } else {
+                    String response = askAsUser(prompt);
+                    System.out.println("Model> " + response);
+                }
             } else {
                 System.out.println("Bye");
                 System.exit(0);
@@ -69,38 +84,59 @@ public class Chat
         }
     }
 
-    public static String askOpenAi(String prompt)
+    public static String askAsUser(String prompt)
     throws Exception {
-        Prompt promptEmbedding = embed(prompt);
-        List<OpenAiMessage> similarPrompts = semanticSearch(
-                promptEmbedding.embeddings());
-        saveUniquePrompt("user", promptEmbedding);
-        List<OpenAiMessage> messages =
-                addPromptEnforcingLimit(similarPrompts, prompt);
+        Embedding promptEmb = embed(prompt);
+        saveMessage(new Message(Role.user, prompt), promptEmb);
+
+        List<Message> similarMessages = semanticSearch(prompt, promptEmb);
+        List<Message> ctx = contextMessages();
+        List<Message> messages = composeMessages(similarMessages, ctx, prompt);
         String completion = chatCompletion(messages);
-        Prompt completionEmbedding = embed(completion);
-        saveUniquePrompt("system", completionEmbedding);
+        Embedding completionEmb = embed(completion);
+        saveMessage(new Message(Role.assistant, completion), completionEmb);
+
         return completion;
     }
 
-    private static List<OpenAiMessage> addPromptEnforcingLimit(
-            List<OpenAiMessage> similarPrompts,
+    public static void processContext(
+            ContextCommand command,
+            String name,
+            String value
+    )
+    throws Exception {
+        switch (command) {
+            case save -> saveContext(new Context(name, value));
+            case delete -> deleteContext(name);
+        }
+    }
+
+    // TODO add all context messages
+    //  https://help.openai.com/en/articles/7042661-chatgpt-api-transition-guide
+
+    private static List<Message> composeMessages(
+            List<Message> similarPrompts,
+            List<Message> context,
             String prompt
     ) {
-        List<OpenAiMessage> messages = new ArrayList<>();
-        int tot = tokenEncoder.countTokens(prompt);
-        for (OpenAiMessage msg : similarPrompts) {
+        List<Message> messages = new ArrayList<>(context);
+        int promptTokens = tokenEncoder.countTokens(prompt);
+        int contextTokens = context.stream()
+                .map(Message::content)
+                .mapToInt(String::length).sum();
+        int tot = promptTokens + contextTokens;
+        for (Message msg : similarPrompts) {
             int count = tokenEncoder.countTokens(msg.content());
             if (tot + count < OPENAI_CHAT_MODEL_MAX_TOKEN) {
                 messages.add(msg);
                 tot += count;
             }
         }
-        messages.add(new OpenAiMessage("user", prompt));
+        messages.add(new Message(Role.user, prompt));
         return messages;
     }
-
-    private static String chatCompletion(List<OpenAiMessage> messages)
+    
+    private static String chatCompletion(List<Message> messages)
     throws Exception {
         try (Jsonb jsonb = Json.jsonb()) {
             String json = String.format(
@@ -135,35 +171,74 @@ public class Chat
         }
     }
 
-    private static void saveUniquePrompt(
-            String role,
-            Prompt prompt
-    )
+    private static List<Message> contextMessages()
     throws SQLException {
         try (Connection conn = DriverManager.getConnection(
                 PG_URL, PG_USER, PG_USER);
-             PreparedStatement find = conn.prepareStatement(
+             PreparedStatement select = conn.prepareStatement(
                      """
-                     select count(*) from prompts where prompt = ?
-                     """);
-             PreparedStatement insert = conn.prepareStatement(
-                     """
-                     insert into prompts (role, prompt, embedding)
-                     values (?, ?, ?)
+                     select value from contexts
                      """)
         ) {
-            find.setString(1, prompt.contents());
-            ResultSet rs = find.executeQuery();
-            rs.next();
-            int count = rs.getInt(1);
-            if (count > 0)
-                return;
+            ResultSet rs = select.executeQuery();
+            List<Message> messages = new ArrayList<>();
+            while (rs.next()) {
+                String value = rs.getString(1);
+                messages.add(new Message(Role.system, value));
+            }
+            return messages;
+        }
+    }
 
-            insert.setString(1, role);
-            insert.setString(2, prompt.contents());
-            float[] floats = toFloatArray(prompt.embeddings());
+    private static void saveMessage(Message message, Embedding embedding)
+    throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                PG_URL, PG_USER, PG_USER);
+             PreparedStatement insert = conn.prepareStatement(
+                     """
+                     insert into messages (role, contents, embedding)
+                     values (?, ?, ?)
+                     on conflict (contents) do nothing
+                     """)
+        ) {
+            insert.setString(1, message.role().name());
+            insert.setString(2, message.content());
+            float[] floats = toFloatArray(embedding.embeddings());
             insert.setObject(3, new PGvector(floats));
             insert.execute();
+        }
+    }
+
+    private static void saveContext(Context ctx)
+    throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                PG_URL, PG_USER, PG_USER);
+             PreparedStatement insert = conn.prepareStatement(
+                     """
+                     insert into contexts (name, value)
+                     values(?, ?)
+                     on conflict (name) do update set value = ?
+                     """)
+        ) {
+            insert.setString(1, ctx.name());
+            insert.setString(2, ctx.value());
+            insert.setString(3, ctx.value());
+            insert.execute();
+        }
+    }
+
+    private static void deleteContext(String name)
+    throws SQLException {
+        try (Connection conn = DriverManager.getConnection(
+                PG_URL, PG_USER, PG_USER);
+             PreparedStatement delete = conn.prepareStatement(
+                     """
+                     delete from contexts
+                     where name = ?
+                     """)
+        ) {
+            delete.setString(1, name);
+            delete.execute();
         }
     }
 
@@ -176,29 +251,33 @@ public class Chat
                 .trim();
     }
 
-    private static List<OpenAiMessage> semanticSearch(List<Float> embeddings)
+    private static List<Message> semanticSearch(
+            String prompt,
+            Embedding embedding)
     throws SQLException {
         try (Connection conn = DriverManager.getConnection(
                 PG_URL, PG_USER, PG_PSW);
              PreparedStatement ps = conn.prepareStatement(
                      """
-                     select role, prompt, embedding <=> ? as dist
-                     from prompts
+                     select role, contents, embedding <=> ? as dist
+                     from messages
+                     where contents <> ?
                      order by embedding <=> ?
                      limit 100
                      """)
         ) {
-            float[] floats = toFloatArray(embeddings);
+            float[] floats = toFloatArray(embedding.embeddings());
             ps.setObject(1, new PGvector(floats));
-            ps.setObject(2, new PGvector(floats));
+            ps.setString(2, prompt);
+            ps.setObject(3, new PGvector(floats));
             ResultSet rs = ps.executeQuery();
-            List<OpenAiMessage> messages = new ArrayList<>();
+            List<Message> messages = new ArrayList<>();
             while (rs.next()) {
                 String role = rs.getString(1);
-                String prompt = rs.getString(2);
+                String contents = rs.getString(2);
                 float dist = rs.getFloat(3);
-                LOG.debug(String.format("Distance %f - %s\n", dist, prompt));
-                messages.add(new OpenAiMessage(role, prompt));
+                LOG.debug(String.format("Distance %f - %s\n", dist, contents));
+                messages.add(new Message(Role.valueOf(role), contents));
             }
             return messages;
         }
@@ -212,7 +291,7 @@ public class Chat
         return floats;
     }
 
-    private static Prompt embed(String value) throws Exception {
+    private static Embedding embed(String value) throws Exception {
         URL url = new URL("https://api.openai.com/v1/embeddings");
         HttpURLConnection con = (HttpURLConnection) url.openConnection();
         con.setDoOutput(true);
@@ -241,7 +320,7 @@ public class Chat
                     jsonb.fromJson(res, OpenAiEmbeddingsResponse.class);
             OpenAiEmbeddingResponse emb =
                     resp.data().get(0);
-            return new Prompt(value, emb.embedding());
+            return new Embedding(emb.embedding());
         }
     }
 }

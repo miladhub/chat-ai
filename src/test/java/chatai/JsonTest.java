@@ -58,14 +58,14 @@ public class JsonTest
 
     @Test
     public void messages_to_json() {
-        List<OpenAiMessage> msgs = List.of(
-                new OpenAiMessage("user", "foo"),
-                new OpenAiMessage("system", "bar")
+        List<Message> msgs = List.of(
+                new Message(Role.user, "foo"),
+                new Message(Role.system, "bar")
         );
         String json = Json.jsonb().toJson(msgs);
         assertEquals(
                 msgs,
                 Arrays.asList(Json.jsonb().fromJson(json,
-                        OpenAiMessage[].class)));
+                        Message[].class)));
     }
 }

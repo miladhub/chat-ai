@@ -24,45 +24,54 @@ $ psql postgres
 psql (14.8 (Homebrew))
 Type "help" for help.
 
-postgres=# CREATE USER quests WITH PASSWORD 'quests';
-postgres=# CREATE DATABASE quests OWNER quests;
-postgres=# EXIT
+postgres=# CREATE USER chat WITH PASSWORD 'chat';
+CREATE ROLE
+postgres=# CREATE DATABASE chat OWNER chat;
+CREATE DATABASE
+postgres=# \q
 ```
 
 Install the extension on the schema by connecting as the superuser:
 
 ```shell
-$ psql quests
+$ psql chat
 psql (14.8 (Homebrew))
 Type "help" for help.
 
-quests=# CREATE EXTENSION vector;
+chat=# CREATE EXTENSION vector;
 CREATE EXTENSION
 ```
 
 The project expects a table called `prompts`, here's how to create it:
 
 ```shell
-$ psql quests quests
+$ psql chat chat
 psql (14.8 (Homebrew))
 Type "help" for help.
 
-quests=> create table prompts (
+chat=> create table messages (
   id bigserial PRIMARY KEY,
   embedding vector(1536),
   role varchar(10),
-  prompt varchar(4000)
+  contents varchar(4000) UNIQUE
 );
+CREATE TABLE
+chat=> create table contexts (
+  id bigserial PRIMARY KEY,
+  name varchar(100) UNIQUE,
+  value varchar(400) not null
+);
+CREATE TABLE
 ```
 
 To delete all past interactions:
 
 ```shell
-$ psql quests quests
+$ psql chat chat
 psql (14.8 (Homebrew))
 Type "help" for help.
 
-quests=> delete from prompts;
+chat=> delete from prompts;
 ```
 
 # Building
@@ -78,7 +87,14 @@ Define the `OPENAI_API_KEY` environment variable and run the JAR:
 ```shell
 $ export OPENAI_API_KEY=your-api-key
 $ java -jar target/chat-ai-*-jar-with-dependencies.jar
-Hit Ctrl-D to exit, enjoy!
+Hit Ctrl-D to exit.
+To save or update context entries, type:
+:context (save|delete) <entry-name> [<entry-value>]
+Enjoy!
+> :context save you are my dungeons and dragons master, and I play the character FizzBuzz, a level 20 wizard
+Model> context updated.
+> who am I?
+Model> You are the player controlling the character FizzBuzz, a level 20 wizard, in our Dungeons and Dragons campaign.
 > 
 ```
 
@@ -88,7 +104,7 @@ This guide assumes that PostgreSQL will be running locally, define the following
 environment variables to override its location:
 
 ```shell
-$ export PG_URL=jdbc:postgresql://localhost:5432/quests
-$ export PG_USER=quests
-$ export PG_PSW=quests
+$ export PG_URL=jdbc:postgresql://localhost:5432/chat
+$ export PG_USER=chat
+$ export PG_PSW=chat
 ```

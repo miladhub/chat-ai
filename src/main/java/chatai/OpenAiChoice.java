@@ -1,7 +1,7 @@
 package chatai;
 
 public record OpenAiChoice(
-        OpenAiMessage message
+        Message message
 )
 {
 }
