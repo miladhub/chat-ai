@@ -78,6 +78,8 @@ psql (14.8 (Homebrew))
 Type "help" for help.
 
 chat=> delete from messages;
+chat=> delete from contexts;
+chat=> delete from model_functions;
 ```
 
 # Building
@@ -97,7 +99,7 @@ Hit Ctrl-D to exit.
 To save or update context entries, type:
 :context (save|delete) <entry-name> [<entry-value>]
 To save or update functions, type:
-:function (save|delete) <fn-name> [<fn-descr> <fn-params-json-schema-file>]
+:function (save|delete) <fn-name> [<fn-params-json-schema-file>]
 Enjoy!
 > Hello!
 Model> Hello! How can I assist you today?
