@@ -21,7 +21,7 @@
               },
               "delta": {
                 "type": "number",
-                "description": "The amount to be algebraically amount of the stat (it can be also negative)"
+                "description": "The amount to be algebraically added to the stat (it can be also negative)"
               }
             },
             "required": ["character", "stat", "value"]
