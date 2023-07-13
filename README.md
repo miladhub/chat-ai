@@ -42,7 +42,7 @@ chat=# CREATE EXTENSION vector;
 CREATE EXTENSION
 ```
 
-The project expects a table called `prompts`, here's how to create it:
+The project expects the following tables:
 
 ```shell
 $ psql chat chat
@@ -70,14 +70,14 @@ chat=> create table model_functions (
 CREATE TABLE
 ```
 
-To delete all past interactions:
+To delete all past interactions, contexts and function, it's enough to delete all rows from them:
 
 ```shell
 $ psql chat chat
 psql (14.8 (Homebrew))
 Type "help" for help.
 
-chat=> delete from prompts;
+chat=> delete from messages;
 ```
 
 # Building
