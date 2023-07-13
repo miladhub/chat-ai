@@ -67,7 +67,7 @@ public class Chat
                 To save or update context entries, type:
                 :context (save|delete) <entry-name> [<entry-value>]
                 To save or update functions, type:
-                :context (save|delete) <fn-name> [<fn-descr> <fn-params-json-schema-file>]
+                :function (save|delete) <fn-name> [<fn-descr> <fn-params-json-schema-file>]
                 Enjoy!""");
         while (true) {
             System.out.print("> ");
