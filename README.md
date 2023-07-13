@@ -113,7 +113,6 @@ Example of using contexts:
 ```shell
 > :context save role You are my Dungeons and Dragons master, and I play the character Duncan, a level 20 wizard
 Model> context updated.
-> :context save 
 > who am I?
 Model> As the Dungeon Master, it is up to you to create and control the world and its inhabitants.
 You have the power to shape the story and guide the players through their adventures.
