@@ -96,16 +96,39 @@ $ java --enable-preview -jar target/chat-ai-*-jar-with-dependencies.jar
 Hit Ctrl-D to exit.
 To save or update context entries, type:
 :context (save|delete) <entry-name> [<entry-value>]
+To save or update functions, type:
+:function (save|delete) <fn-name> [<fn-descr> <fn-params-json-schema-file>]
 Enjoy!
-> :context save role you are my dungeons and dragons master, and I play the character FizzBuzz, a level 20 wizard
+> Hello!
+Model> Hello! How can I assist you today?
+```
+
+# Using contexts
+
+Context entries are sent at every interaction, with the role "system", to help the AI
+perform better.
+
+Example of using contexts:
+
+```shell
+> :context save role You are my Dungeons and Dragons master, and I play the character Duncan, a level 20 wizard
 Model> context updated.
+> :context save 
 > who am I?
 Model> As the Dungeon Master, it is up to you to create and control the world and its inhabitants.
 You have the power to shape the story and guide the players through their adventures.
 Your role is to describe the environments, non-player characters, and to facilitate the progression of the game.
-So, in this case, you are the one orchestrating the game and playing all the other characters besides FizzBuzz.
+So, in this case, you are the one orchestrating the game and playing all the other characters besides Duncan.
 > 
 ```
+
+# Using functions
+
+[Functions](https://platform.openai.com/docs/guides/gpt/function-calling) are sent at every interaction, to allow the
+caller an executable piece of logic as the AI response.
+
+The textual chat just prints out how the function would be executed; to actually be able to use the function,
+the `Chat.askCompletion` method must be used.
 
 Example of using functions:
 

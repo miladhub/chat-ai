@@ -88,8 +88,14 @@ public class Chat
                             function.length >= 4? function[3] : null);
                     System.out.println("Model> function  updated.");
                 } else {
-                    String response = askCompletion(prompt);
-                    System.out.println("Model> " + response);
+                    ChatResponse response = askCompletion(prompt);
+                    switch (response) {
+                        case MessageChatResponse msg ->
+                                System.out.println("Model> " + msg.content());
+                        case FunctionCallChatResponse fn ->
+                                System.out.println("Model> " + fn.name() + "( " + fn.arguments() + " )");
+                        default -> throw new IllegalStateException();
+                    }
                 }
             } else {
                 System.out.println("Bye");
@@ -98,7 +104,7 @@ public class Chat
         }
     }
 
-    public static String askCompletion(String prompt)
+    public static ChatResponse askCompletion(String prompt)
     throws Exception {
         Embedding promptEmb = embed(prompt);
         saveMessage(new Message(Role.user, prompt), promptEmb);
@@ -113,10 +119,10 @@ public class Chat
             case MessageChatResponse msg -> {
                 Embedding completionEmb = embed(msg.content());
                 saveMessage(new Message(Role.assistant, msg.content()), completionEmb);
-                return msg.content();
+                return msg;
             }
             case FunctionCallChatResponse fn -> {
-                return fn.name() + "( " + fn.arguments() + " )";
+                return fn;
             }
             default -> throw new IllegalStateException();
         }
@@ -142,7 +148,7 @@ public class Chat
         }
     }
 
-    public static void updateContext(
+    private static void updateContext(
             Command command,
             String name,
             String value
@@ -154,7 +160,7 @@ public class Chat
         }
     }
 
-    public static void updateFunction(
+    private static void updateFunction(
             Command command,
             String name,
             String bodyFile
