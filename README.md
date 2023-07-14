@@ -84,17 +84,22 @@ chat=> delete from model_functions;
 
 # Building
 
+The project is comprised of a main module, that includes a command-line interface,
+and a web module, that offers a REST interface. The following commands builds everything:
+
 ```shell
 $ mvn clean install
 ```
 
-# Running
+# Asking for completions
 
-Define the `OPENAI_API_KEY` environment variable and run the JAR:
+Completions can be asked from both the CLI and from the REST interface.
+
+To use the CLI, define the `OPENAI_API_KEY` environment variable and run the JAR:
 
 ```shell
 $ export OPENAI_API_KEY=your-api-key
-$ java --enable-preview -jar target/chat-ai-*-jar-with-dependencies.jar
+$ java --enable-preview -jar chat-ai-main/target/chat-ai-*-jar-with-dependencies.jar
 Hit Ctrl-D to exit.
 To save or update context entries, type:
 :context (save|delete) <entry-name> [<entry-value>]
@@ -105,12 +110,51 @@ Enjoy!
 Model> Hello! How can I assist you today?
 ```
 
+To use the REST interface, first start the server:
+
+```shell
+$ java --enable-preview -jar chat-ai-rest/target/quarkus-app/quarkus-run.jar
+```
+
+and then use it:
+
+```shell
+$ curl -s localhost:8080/chat \
+  -H "Accept: application/json" \
+  -H "Content-type: application/json" \
+  -d '{
+    "apiKey": "your-api-key",
+    "prompt": "Hello!"
+  }' | jq
+{
+  "content" : "Hello! How can I assist you today?"
+}
+```
+
+Or, using Javascript:
+
+```javascript
+fetch("http://localhost:8080/chat", {
+    method: "POST",
+    headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+        },
+    body: JSON.stringify({
+        "apiKey": "your-api-key",
+        "prompt": "Hello!"
+    })
+})
+.then(res => res.text())
+.then(console.log)
+```
+
 # Using contexts
 
 Context entries are sent at every interaction, with the role "system", to help the AI
 perform better.
 
-Example of using contexts:
+Contexts can only be managed from the CLI. For example:
 
 ```shell
 > :context save role You are my Dungeons and Dragons master, and I play the character Duncan, a level 20 wizard
@@ -128,10 +172,7 @@ So, in this case, you are the one orchestrating the game and playing all the oth
 [Functions](https://platform.openai.com/docs/guides/gpt/function-calling) are sent at every interaction, to allow the
 caller an executable piece of logic as the AI response.
 
-The textual chat just prints out how the function would be executed; to actually be able to use the function,
-the `Chat.askCompletion` method must be used.
-
-Example of using functions:
+Functions can only be managed from the CLI.
 
 ```shell
 > :function save update_characters_stats update_characters_stats.json
@@ -153,6 +194,11 @@ Model> update_characters_stats( {
 } )
 > 
 ```
+
+When a function response is received from the CLI, the textual chat just prints out how the
+function would be executed in a pseudo language. To actually be able to use the function, it is
+better to ask for completions via REST, so that the client (e.g., a Javascript one) can actually
+use the response to invoke a function or perform some logic.
 
 # Running the DB elsewhere
 

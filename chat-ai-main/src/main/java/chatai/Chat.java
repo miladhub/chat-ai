@@ -88,7 +88,9 @@ public class Chat
                             function.length >= 4? function[3] : null);
                     System.out.println("Model> function  updated.");
                 } else {
-                    ChatResponse response = askCompletion(prompt);
+                    ChatResponse response = askCompletion(new ChatRequest(
+                            OPENAI_API_KEY, prompt
+                    ));
                     switch (response) {
                         case MessageChatResponse msg ->
                                 System.out.println("Model> " + msg.content());
@@ -104,20 +106,23 @@ public class Chat
         }
     }
 
-    public static ChatResponse askCompletion(String prompt)
+    public static ChatResponse askCompletion(ChatRequest request)
     throws Exception {
-        Embedding promptEmb = embed(prompt);
+        String apiKey = request.apiKey();
+        String prompt = request.prompt();
+
+        Embedding promptEmb = embed(apiKey, prompt);
         saveMessage(new Message(Role.user, prompt), promptEmb);
 
         List<Message> similarMessages = semanticSearch(prompt, promptEmb);
         List<Message> ctx = contextMessages();
         List<Message> messages = composeMessages(similarMessages, ctx, prompt);
         List<ModelFunction> functions = functions();
-        ChatResponse response = chatCompletion(messages, functions);
+        ChatResponse response = chatCompletion(apiKey, messages, functions);
 
         switch (response) {
             case MessageChatResponse msg -> {
-                Embedding completionEmb = embed(msg.content());
+                Embedding completionEmb = embed(apiKey, msg.content());
                 saveMessage(new Message(Role.assistant, msg.content()), completionEmb);
                 return msg;
             }
@@ -199,6 +204,7 @@ public class Chat
     }
     
     private static ChatResponse chatCompletion(
+            String apiKey,
             List<Message> messages,
             List<ModelFunction> functions
     )
@@ -211,7 +217,7 @@ public class Chat
             con.setRequestMethod("POST");
             con.setRequestProperty("Content-Type", "application/json");
             con.setRequestProperty("Accept", "application/json");
-            con.setRequestProperty("Authorization", "Bearer " + OPENAI_API_KEY);
+            con.setRequestProperty("Authorization", "Bearer " + apiKey);
             con.setConnectTimeout(300_000);
             con.setReadTimeout(300_000);
             try (OutputStream os = con.getOutputStream()) {
@@ -422,14 +428,17 @@ public class Chat
         return floats;
     }
 
-    private static Embedding embed(String value) throws Exception {
+    private static Embedding embed(
+            String apiKey,
+            String value
+    ) throws Exception {
         URL url = new URL("https://api.openai.com/v1/embeddings");
         HttpURLConnection con = (HttpURLConnection) url.openConnection();
         con.setDoOutput(true);
         con.setRequestMethod("POST");
         con.setRequestProperty("Content-Type", "application/json");
         con.setRequestProperty("Accept", "application/json");
-        con.setRequestProperty("Authorization", "Bearer " + OPENAI_API_KEY);
+        con.setRequestProperty("Authorization", "Bearer " + apiKey);
         con.setConnectTimeout(300_000);
         con.setReadTimeout(300_000);
         try (OutputStream os = con.getOutputStream()) {
