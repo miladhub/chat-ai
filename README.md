@@ -53,13 +53,14 @@ chat=> create table messages (
   id bigserial PRIMARY KEY,
   embedding vector(1536),
   role varchar(10),
-  contents varchar(4000) UNIQUE
+  contents varchar(4000) UNIQUE,
+  message_ts timestamp not null 
 );
 CREATE TABLE
 chat=> create table contexts (
   id bigserial PRIMARY KEY,
   name varchar(100) UNIQUE,
-  value varchar(400) not null
+  value varchar(1000) not null
 );
 CREATE TABLE
 chat=> create table model_functions (

@@ -16,7 +16,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.Files;
 import java.sql.*;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -109,21 +111,24 @@ public class Chat
     public static ChatResponse askCompletion(ChatRequest request)
     throws Exception {
         String apiKey = request.apiKey();
-        String prompt = request.prompt();
+        String promptTxt = request.prompt();
+        Message prompt = new Message(Role.user, promptTxt, Instant.now());
 
-        Embedding promptEmb = embed(apiKey, prompt);
-        saveMessage(new Message(Role.user, prompt), promptEmb);
+        Embedding promptEmb = embed(apiKey, promptTxt);
+        saveMessage(prompt, promptEmb);
 
-        List<Message> similarMessages = semanticSearch(prompt, promptEmb);
-        List<Message> ctx = contextMessages();
-        List<Message> messages = composeMessages(similarMessages, ctx, prompt);
+        List<Message> similar = semanticSearch(promptTxt, promptEmb);
+        List<OpenAiRequestMessage> ctx = contextMessages();
+        List<OpenAiRequestMessage> messages = composeMessages(similar, ctx, prompt);
         List<ModelFunction> functions = functions();
         ChatResponse response = chatCompletion(apiKey, messages, functions);
 
         switch (response) {
             case MessageChatResponse msg -> {
                 Embedding completionEmb = embed(apiKey, msg.content());
-                saveMessage(new Message(Role.assistant, msg.content()), completionEmb);
+                saveMessage(
+                        new Message(Role.assistant, msg.content(), Instant.now()),
+                        completionEmb);
                 return msg;
             }
             case FunctionCallChatResponse fn -> {
@@ -180,32 +185,32 @@ public class Chat
         }
     }
 
-    private static List<Message> composeMessages(
+    private static List<OpenAiRequestMessage> composeMessages(
             List<Message> similarPrompts,
-            List<Message> context,
-            String prompt
+            List<OpenAiRequestMessage> context,
+            Message prompt
     ) {
-        List<Message> messages = new ArrayList<>(context);
-        int promptTokens = tokenEncoder.countTokens(prompt);
+        List<OpenAiRequestMessage> messages = new ArrayList<>(context);
+        int promptTokens = tokenEncoder.countTokens(prompt.content());
         int contextTokens = context.stream()
-                .map(Message::content)
+                .map(OpenAiRequestMessage::content)
                 .mapToInt(tokenEncoder::countTokens)
                 .sum();
         int tot = promptTokens + contextTokens;
         for (Message msg : similarPrompts) {
             int count = tokenEncoder.countTokens(msg.content());
             if (tot + count < OPENAI_CHAT_MODEL_MAX_TOKEN) {
-                messages.add(msg);
+                messages.add(new OpenAiRequestMessage(msg.role(), msg.content()));
                 tot += count;
             }
         }
-        messages.add(new Message(Role.user, prompt));
+        messages.add(new OpenAiRequestMessage(prompt.role(), prompt.content()));
         return messages;
     }
     
     private static ChatResponse chatCompletion(
             String apiKey,
-            List<Message> messages,
+            List<OpenAiRequestMessage> messages,
             List<ModelFunction> functions
     )
     throws Exception {
@@ -228,7 +233,7 @@ public class Chat
             try (InputStream is = con.getInputStream()) {
                 String res = new String(is.readAllBytes(), UTF_8);
                 OpenAiResponse resp = jsonb.fromJson(res, OpenAiResponse.class);
-                OpenAiMessage msg = resp.choices().get(0).message();
+                OpenAiResponseMessage msg = resp.choices().get(0).message();
                 if (msg.function_call() != null)
                     return new FunctionCallChatResponse(
                             msg.function_call().name(),
@@ -240,7 +245,7 @@ public class Chat
     }
 
     private static String toJson(
-            List<Message> messages,
+            List<OpenAiRequestMessage> messages,
             List<ModelFunction> functions
     )
     throws Exception {
@@ -275,7 +280,7 @@ public class Chat
         }
     }
 
-    private static List<Message> contextMessages()
+    private static List<OpenAiRequestMessage> contextMessages()
     throws SQLException {
         try (Connection conn = DriverManager.getConnection(
                 PG_URL, PG_USER, PG_USER);
@@ -285,30 +290,31 @@ public class Chat
                      """)
         ) {
             ResultSet rs = select.executeQuery();
-            List<Message> messages = new ArrayList<>();
+            List<OpenAiRequestMessage> messages = new ArrayList<>();
             while (rs.next()) {
                 String value = rs.getString(1);
-                messages.add(new Message(Role.system, value));
+                messages.add(new OpenAiRequestMessage(Role.system, value));
             }
             return messages;
         }
     }
 
-    private static void saveMessage(Message message, Embedding embedding)
+    private static void saveMessage(Message msg, Embedding embedding)
     throws SQLException {
         try (Connection conn = DriverManager.getConnection(
                 PG_URL, PG_USER, PG_USER);
              PreparedStatement insert = conn.prepareStatement(
                      """
-                     insert into messages (role, contents, embedding)
-                     values (?, ?, ?)
+                     insert into messages (role, contents, embedding, message_ts)
+                     values (?, ?, ?, ?)
                      on conflict (contents) do nothing
                      """)
         ) {
-            insert.setString(1, message.role().name());
-            insert.setString(2, message.content());
+            insert.setString(1, msg.role().name());
+            insert.setString(2, msg.content());
             float[] floats = toFloatArray(embedding.embeddings());
             insert.setObject(3, new PGvector(floats));
+            insert.setTimestamp(4, new Timestamp(msg.timestamp().toEpochMilli()));
             insert.execute();
         }
     }
@@ -396,7 +402,7 @@ public class Chat
                 PG_URL, PG_USER, PG_PSW);
              PreparedStatement ps = conn.prepareStatement(
                      """
-                     select role, contents, embedding <=> ? as dist
+                     select role, contents, message_ts, embedding <=> ? as dist
                      from messages
                      where contents <> ?
                      order by embedding <=> ?
@@ -412,10 +418,16 @@ public class Chat
             while (rs.next()) {
                 String role = rs.getString(1);
                 String contents = rs.getString(2);
-                float dist = rs.getFloat(3);
+                Timestamp timestamp = rs.getTimestamp(3);
+                float dist = rs.getFloat(4);
                 LOG.debug(String.format("Distance %f - %s\n", dist, contents));
-                messages.add(new Message(Role.valueOf(role), contents));
+                messages.add(new Message(
+                        Role.valueOf(role),
+                        contents,
+                        timestamp.toInstant()
+                ));
             }
+            messages.sort(Comparator.comparing(Message::timestamp));
             return messages;
         }
     }

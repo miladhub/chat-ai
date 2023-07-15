@@ -5,6 +5,10 @@
     {
       "type": "object",
       "properties": {
+        "story_telling": {
+          "type": "string",
+          "description": "This parameter is used to describe what happens to the characters involved"
+        },
         "changes" : {
           "type": "array",
           "items": {
@@ -28,6 +32,6 @@
           }
         }
       },
-      "required": ["changes"]
+      "required": ["story_telling","changes"]
     }
 }
