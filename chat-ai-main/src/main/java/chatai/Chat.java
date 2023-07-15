@@ -27,7 +27,10 @@ import java.util.List;
 public class Chat
 {
     private static final String OPENAI_API_KEY = System.getenv("OPENAI_API_KEY");
-    private static final int OPENAI_CHAT_MODEL_MAX_TOKENS = 4096;
+
+    // While OpenAI allows 4,096 tokens, this project breaks at ~3500
+    // probably due to the token encoder not being OpenAI's
+    private static final int OPENAI_CHAT_MODEL_MAX_TOKENS = 3500;
 
     private static final EncodingRegistry registry =
             Encodings.newDefaultEncodingRegistry();
