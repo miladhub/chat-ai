@@ -16,6 +16,6 @@ public class ChatController
     @Consumes("application/json")
     public ChatResponse askCompletion(ChatRequest request)
     throws Exception {
-        return Chat.askCompletion(request);
+        return Chat.create().askCompletion(request);
     }
 }

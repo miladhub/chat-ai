@@ -6,23 +6,15 @@ import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingRegistry;
 import com.knuddels.jtokkit.api.ModelType;
-import com.pgvector.PGvector;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import javax.json.bind.Jsonb;
-import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
-import java.sql.*;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
-
-import static java.nio.charset.StandardCharsets.*;
 
 /**
  * Enforcing 4,096 token limit for gpt-3.5-turbo.
@@ -34,33 +26,28 @@ import static java.nio.charset.StandardCharsets.*;
  */
 public class Chat
 {
-    private static final Logger LOG = LoggerFactory.getLogger(Chat.class);
-
     private static final String OPENAI_API_KEY = System.getenv("OPENAI_API_KEY");
-    private static final String OPENAI_CHAT_MODEL = "gpt-3.5-turbo";
-    private static final int OPENAI_CHAT_MODEL_MAX_TOKEN = 4096;
-    private static final String OPENAI_EMB_MODEL = "text-embedding-ada-002";
+    private static final int OPENAI_CHAT_MODEL_MAX_TOKENS = 4096;
 
     private static final EncodingRegistry registry =
             Encodings.newDefaultEncodingRegistry();
     private static final Encoding tokenEncoder =
             registry.getEncodingForModel(ModelType.GPT_3_5_TURBO);
 
-    private static final String PG_URL =
-            System.getenv("PG_URL") != null
-                ? System.getenv("PG_URL")
-                : "jdbc:postgresql://localhost:5432/chat";
-    private static final String PG_USER =
-            System.getenv("PG_USER") != null
-                    ? System.getenv("PG_USER")
-                    : "chat";
-    private static final String PG_PSW =
-            System.getenv("PG_PSW") != null
-                    ? System.getenv("PG_PSW")
-                    : "chat";
+    private final PromptRepository repository;
+    private final OpenAiClient client;
+    private final int tokenLimit;
+
+    public static Chat create() {
+        return new Chat(
+                new PgVectorPromptRepository(),
+                new HttpUrlConnectionOpenAiClient(),
+                OPENAI_CHAT_MODEL_MAX_TOKENS);
+    }
 
     public static void main(String[] args)
     throws Exception {
+        Chat chat = create();
         BufferedReader reader =
                 new BufferedReader(new InputStreamReader(System.in));
         System.out.println(
@@ -77,20 +64,20 @@ public class Chat
             if (prompt != null) {
                 if (prompt.startsWith(":context ")) {
                     String[] context = prompt.split("\s+", 4);
-                    updateContext(
+                    chat.updateContext(
                             Command.valueOf(context[1]),
                             context[2],
                             context.length >= 4? context[3] : null);
                     System.out.println("Model> context updated.");
                 } else if (prompt.startsWith(":function ")) {
                     String[] function = prompt.split("\s+", 4);
-                    updateFunction(
+                    chat.updateFunction(
                             Command.valueOf(function[1]),
                             function[2],
                             function.length >= 4? function[3] : null);
                     System.out.println("Model> function  updated.");
                 } else {
-                    ChatResponse response = askCompletion(new ChatRequest(
+                    ChatResponse response = chat.askCompletion(new ChatRequest(
                             OPENAI_API_KEY, prompt
                     ));
                     switch (response) {
@@ -108,25 +95,39 @@ public class Chat
         }
     }
 
-    public static ChatResponse askCompletion(ChatRequest request)
+    public Chat(
+            PromptRepository repository,
+            OpenAiClient client,
+            int tokenLimit
+    ) {
+        this.repository = repository;
+        this.client = client;
+        this.tokenLimit = tokenLimit;
+    }
+
+    public ChatResponse askCompletion(ChatRequest request)
     throws Exception {
         String apiKey = request.apiKey();
         String promptTxt = request.prompt();
         Message prompt = new Message(Role.user, promptTxt, Instant.now());
 
-        Embedding promptEmb = embed(apiKey, promptTxt);
-        saveMessage(prompt, promptEmb);
+        Embedding promptEmb = client.embed(apiKey, promptTxt);
+        repository.saveMessage(prompt, promptEmb);
 
-        List<Message> similar = semanticSearch(promptTxt, promptEmb);
-        List<OpenAiRequestMessage> ctx = contextMessages();
+        List<Message> similar = repository.semanticSearch(promptTxt, promptEmb);
+
+        List<OpenAiRequestMessage> ctx = repository.contextMessages().stream()
+                .map(c -> new OpenAiRequestMessage(Role.system, c.value()))
+                .toList();
+
         List<OpenAiRequestMessage> messages = composeMessages(similar, ctx, prompt);
-        List<ModelFunction> functions = functions();
-        ChatResponse response = chatCompletion(apiKey, messages, functions);
+        List<ModelFunction> functions = repository.functions();
+        ChatResponse response = client.chatCompletion(apiKey, messages, functions);
 
         switch (response) {
             case MessageChatResponse msg -> {
-                Embedding completionEmb = embed(apiKey, msg.content());
-                saveMessage(
+                Embedding completionEmb = client.embed(apiKey, msg.content());
+                repository.saveMessage(
                         new Message(Role.assistant, msg.content(), Instant.now()),
                         completionEmb);
                 return msg;
@@ -138,39 +139,19 @@ public class Chat
         }
     }
 
-    private static List<ModelFunction> functions()
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_USER);
-             PreparedStatement select = conn.prepareStatement(
-                     """
-                     select name, body from model_functions
-                     """)
-        ) {
-            ResultSet rs = select.executeQuery();
-            List<ModelFunction> messages = new ArrayList<>();
-            while (rs.next()) {
-                String name = rs.getString(1);
-                String body = rs.getString(2);
-                messages.add(new ModelFunction(name, body));
-            }
-            return messages;
-        }
-    }
-
-    private static void updateContext(
+    private void updateContext(
             Command command,
             String name,
             String value
     )
     throws Exception {
         switch (command) {
-            case save -> saveContext(new Context(name, value));
-            case delete -> deleteContext(name);
+            case save -> repository.saveContext(new Context(name, value));
+            case delete -> repository.deleteContext(name);
         }
     }
 
-    private static void updateFunction(
+    private void updateFunction(
             Command command,
             String name,
             String bodyFile
@@ -179,300 +160,41 @@ public class Chat
         switch (command) {
             case save -> {
                 String body = Files.readString(new File(bodyFile).toPath());
-                saveFunction(new ModelFunction(name, body));
+                repository.saveFunction(new ModelFunction(name, body));
             }
-            case delete -> deleteFunction(name);
+            case delete -> repository.deleteFunction(name);
         }
     }
 
-    private static List<OpenAiRequestMessage> composeMessages(
-            List<Message> similarPrompts,
+    private List<OpenAiRequestMessage> composeMessages(
+            List<Message> similar,
             List<OpenAiRequestMessage> context,
             Message prompt
     ) {
-        List<OpenAiRequestMessage> messages = new ArrayList<>(context);
         int promptTokens = tokenEncoder.countTokens(prompt.content());
         int contextTokens = context.stream()
                 .map(OpenAiRequestMessage::content)
                 .mapToInt(tokenEncoder::countTokens)
                 .sum();
         int tot = promptTokens + contextTokens;
-        for (Message msg : similarPrompts) {
+        List<Message> similarBound = new ArrayList<>();
+        for (Message msg : similar) {
             int count = tokenEncoder.countTokens(msg.content());
-            if (tot + count < OPENAI_CHAT_MODEL_MAX_TOKEN) {
-                messages.add(new OpenAiRequestMessage(msg.role(), msg.content()));
+            if (tot + count < tokenLimit) {
+                similarBound.add(msg);
                 tot += count;
             }
         }
+
+        List<Message> similarSorted = similarBound.stream()
+                .sorted(Comparator.comparing(Message::timestamp))
+                .toList();
+
+        List<OpenAiRequestMessage> messages = new ArrayList<>(context);
+        messages.addAll(similarSorted.stream()
+                .map(m -> new OpenAiRequestMessage(m.role(), m.content()))
+                .toList());
         messages.add(new OpenAiRequestMessage(prompt.role(), prompt.content()));
         return messages;
-    }
-    
-    private static ChatResponse chatCompletion(
-            String apiKey,
-            List<OpenAiRequestMessage> messages,
-            List<ModelFunction> functions
-    )
-    throws Exception {
-        try (Jsonb jsonb = Json.jsonb()) {
-            String json = toJson(messages, functions);
-            URL url = new URL("https://api.openai.com/v1/chat/completions");
-            HttpURLConnection con = (HttpURLConnection) url.openConnection();
-            con.setDoOutput(true);
-            con.setRequestMethod("POST");
-            con.setRequestProperty("Content-Type", "application/json");
-            con.setRequestProperty("Accept", "application/json");
-            con.setRequestProperty("Authorization", "Bearer " + apiKey);
-            con.setConnectTimeout(300_000);
-            con.setReadTimeout(300_000);
-            try (OutputStream os = con.getOutputStream()) {
-                LOG.debug("Sending JSON to chat completion API:\n" + json);
-                byte[] bytes = json.getBytes(UTF_8);
-                os.write(bytes, 0, bytes.length);
-            }
-            try (InputStream is = con.getInputStream()) {
-                String res = new String(is.readAllBytes(), UTF_8);
-                OpenAiResponse resp = jsonb.fromJson(res, OpenAiResponse.class);
-                OpenAiResponseMessage msg = resp.choices().get(0).message();
-                if (msg.function_call() != null)
-                    return new FunctionCallChatResponse(
-                            msg.function_call().name(),
-                            msg.function_call().arguments()
-                    );
-                else return new MessageChatResponse(msg.content());
-            }
-        }
-    }
-
-    private static String toJson(
-            List<OpenAiRequestMessage> messages,
-            List<ModelFunction> functions
-    )
-    throws Exception {
-        try (Jsonb jsonb = Json.jsonb()) {
-            if (functions.isEmpty()) {
-                return String.format(
-                        """
-                        {
-                            "model": "%s",
-                            "messages": %s,
-                            "temperature": 0.7
-                        }
-                        """,
-                        OPENAI_CHAT_MODEL,
-                        jsonb.toJson(messages));
-            } else {
-                return String.format(
-                        """
-                        {
-                            "model": "%s",
-                            "messages": %s,
-                            "functions": %s,
-                            "temperature": 0.7
-                        }
-                        """,
-                        OPENAI_CHAT_MODEL,
-                        jsonb.toJson(messages),
-                        "[" + functions.stream()
-                                .map(ModelFunction::body)
-                                .collect(Collectors.joining(",\n")) + "]");
-            }
-        }
-    }
-
-    private static List<OpenAiRequestMessage> contextMessages()
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_USER);
-             PreparedStatement select = conn.prepareStatement(
-                     """
-                     select value from contexts
-                     """)
-        ) {
-            ResultSet rs = select.executeQuery();
-            List<OpenAiRequestMessage> messages = new ArrayList<>();
-            while (rs.next()) {
-                String value = rs.getString(1);
-                messages.add(new OpenAiRequestMessage(Role.system, value));
-            }
-            return messages;
-        }
-    }
-
-    private static void saveMessage(Message msg, Embedding embedding)
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_USER);
-             PreparedStatement insert = conn.prepareStatement(
-                     """
-                     insert into messages (role, contents, embedding, message_ts)
-                     values (?, ?, ?, ?)
-                     on conflict (contents) do nothing
-                     """)
-        ) {
-            insert.setString(1, msg.role().name());
-            insert.setString(2, msg.content());
-            float[] floats = toFloatArray(embedding.embeddings());
-            insert.setObject(3, new PGvector(floats));
-            insert.setTimestamp(4, new Timestamp(msg.timestamp().toEpochMilli()));
-            insert.execute();
-        }
-    }
-
-    private static void saveContext(Context ctx)
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_USER);
-             PreparedStatement insert = conn.prepareStatement(
-                     """
-                     insert into contexts (name, value)
-                     values(?, ?)
-                     on conflict (name) do update set value = ?
-                     """)
-        ) {
-            insert.setString(1, ctx.name());
-            insert.setString(2, ctx.value());
-            insert.setString(3, ctx.value());
-            insert.execute();
-        }
-    }
-
-    private static void deleteContext(String name)
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_USER);
-             PreparedStatement delete = conn.prepareStatement(
-                     """
-                     delete from contexts
-                     where name = ?
-                     """)
-        ) {
-            delete.setString(1, name);
-            delete.execute();
-        }
-    }
-
-    private static void saveFunction(ModelFunction fn)
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_USER);
-             PreparedStatement insert = conn.prepareStatement(
-                     """
-                     insert into model_functions (name, body)
-                     values(?, ?::jsonb)
-                     on conflict (name) do update set body = ?::jsonb
-                     """)
-        ) {
-            insert.setString(1, fn.name());
-            insert.setString(2, fn.body());
-            insert.setString(3, fn.body());
-            insert.execute();
-        }
-    }
-
-    private static void deleteFunction(String name)
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_USER);
-             PreparedStatement delete = conn.prepareStatement(
-                     """
-                     delete from model_functions
-                     where name = ?
-                     """)
-        ) {
-            delete.setString(1, name);
-            delete.execute();
-        }
-    }
-
-    private static String clean(String prompt) {
-        return prompt
-                .replace("\n", " ")
-                .replace("'", "''")
-                .replace("\"", "\\\"")
-                .replaceAll("\s+", " ")
-                .trim();
-    }
-
-    private static List<Message> semanticSearch(
-            String prompt,
-            Embedding embedding)
-    throws SQLException {
-        try (Connection conn = DriverManager.getConnection(
-                PG_URL, PG_USER, PG_PSW);
-             PreparedStatement ps = conn.prepareStatement(
-                     """
-                     select role, contents, message_ts, embedding <=> ? as dist
-                     from messages
-                     where contents <> ?
-                     order by embedding <=> ?
-                     limit 100
-                     """)
-        ) {
-            float[] floats = toFloatArray(embedding.embeddings());
-            ps.setObject(1, new PGvector(floats));
-            ps.setString(2, prompt);
-            ps.setObject(3, new PGvector(floats));
-            ResultSet rs = ps.executeQuery();
-            List<Message> messages = new ArrayList<>();
-            while (rs.next()) {
-                String role = rs.getString(1);
-                String contents = rs.getString(2);
-                Timestamp timestamp = rs.getTimestamp(3);
-                float dist = rs.getFloat(4);
-                LOG.debug(String.format("Distance %f - %s\n", dist, contents));
-                messages.add(new Message(
-                        Role.valueOf(role),
-                        contents,
-                        timestamp.toInstant()
-                ));
-            }
-            messages.sort(Comparator.comparing(Message::timestamp));
-            return messages;
-        }
-    }
-
-    private static float[] toFloatArray(List<Float> floatObjects) {
-        float[] floats = new float[floatObjects.size()];
-        for (int i = 0; i < floatObjects.size(); i++) {
-            floats[i] = floatObjects.get(i);
-        }
-        return floats;
-    }
-
-    private static Embedding embed(
-            String apiKey,
-            String value
-    ) throws Exception {
-        URL url = new URL("https://api.openai.com/v1/embeddings");
-        HttpURLConnection con = (HttpURLConnection) url.openConnection();
-        con.setDoOutput(true);
-        con.setRequestMethod("POST");
-        con.setRequestProperty("Content-Type", "application/json");
-        con.setRequestProperty("Accept", "application/json");
-        con.setRequestProperty("Authorization", "Bearer " + apiKey);
-        con.setConnectTimeout(300_000);
-        con.setReadTimeout(300_000);
-        try (OutputStream os = con.getOutputStream()) {
-            String json = String.format("""
-                    {
-                        "model": "%s",
-                        "input": "%s"
-                    }
-                    """, OPENAI_EMB_MODEL, clean(value));
-            LOG.debug("Sending JSON to embeddings API:\n" + json);
-            byte[] bytes = json.getBytes(UTF_8);
-            os.write(bytes, 0, bytes.length);
-        }
-        try (InputStream is = con.getInputStream();
-             Jsonb jsonb = Json.jsonb()
-        ) {
-            String res = new String(is.readAllBytes(), UTF_8);
-            OpenAiEmbeddingsResponse resp =
-                    jsonb.fromJson(res, OpenAiEmbeddingsResponse.class);
-            OpenAiEmbeddingResponse emb =
-                    resp.data().get(0);
-            return new Embedding(emb.embedding());
-        }
     }
 }
