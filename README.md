@@ -94,13 +94,13 @@ fetch("http://localhost:8080/chat", {
     headers: {
         "Accept": "application/json",
         "Content-Type": "application/json"
-        },
+    },
     body: JSON.stringify({
         "apiKey": "your-api-key",
         "prompt": "Hello!"
     })
 })
-.then(res => res.text())
+.then(res => res.json())
 .then(console.log)
 ```
 
