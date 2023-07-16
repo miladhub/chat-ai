@@ -9,7 +9,7 @@ This project uses
 # Setting up the database
 
 Install <https://www.postgresql.org> and <https://github.com/pgvector/pgvector> on
-top of it; as an example, here's how to do it on MacOS:
+top of it; as an example, here's how to do it on macOS:
 
 ```shell
 $ brew install postgresql
