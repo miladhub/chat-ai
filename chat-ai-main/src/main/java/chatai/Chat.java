@@ -78,7 +78,7 @@ public class Chat
                             Command.valueOf(function[1]),
                             function[2],
                             function.length >= 4? function[3] : null);
-                    System.out.println("Model> function  updated.");
+                    System.out.println("Model> function updated.");
                 } else {
                     ChatResponse response = chat.askCompletion(new ChatRequest(
                             OPENAI_API_KEY, prompt

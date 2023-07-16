@@ -131,7 +131,7 @@ Functions can only be managed from the CLI.
 
 ```shell
 > :function save update_characters_stats update_characters_stats.json
-Model> function  updated.
+Model> function updated.
 > make it so that Duncan gets a bit hurt
 Model> update_characters_stats( {
   "changes": [
