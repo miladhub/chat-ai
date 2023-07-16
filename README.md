@@ -17,71 +17,25 @@ $ brew services start postgresql@14
 $ brew install pgvector
 ```
 
-Create the database user and schema:
+Create (or reset) the database user and schema:
 
 ```shell
-$ psql postgres
-psql (14.8 (Homebrew))
-Type "help" for help.
-
-postgres=# CREATE USER chat WITH PASSWORD 'chat';
-CREATE ROLE
-postgres=# CREATE DATABASE chat OWNER chat;
-CREATE DATABASE
-postgres=# \q
+$ psql postgres -a -f recreate_db_and_user.sql
 ```
 
 Install the extension on the schema by connecting as the superuser:
 
 ```shell
-$ psql chat
-psql (14.8 (Homebrew))
-Type "help" for help.
-
-chat=# CREATE EXTENSION vector;
-CREATE EXTENSION
+$ psql chat -c "CREATE EXTENSION vector"
 ```
 
-The project expects the following tables:
+Create (or reset) the tables:
 
 ```shell
-$ psql chat chat
-psql (14.8 (Homebrew))
-Type "help" for help.
-
-chat=> create table messages (
-  id bigserial PRIMARY KEY,
-  embedding vector(1536),
-  role varchar(10),
-  contents varchar(4000) UNIQUE,
-  message_ts timestamp not null 
-);
-CREATE TABLE
-chat=> create table contexts (
-  id bigserial PRIMARY KEY,
-  name varchar(100) UNIQUE,
-  value varchar(1000) not null
-);
-CREATE TABLE
-chat=> create table model_functions (
-  id bigserial PRIMARY KEY,
-  name varchar(100) UNIQUE,
-  body json not null
-);
-CREATE TABLE
+$ psql chat -U chat -a -w -f recreate_tables.sql
 ```
 
-To delete all past interactions, contexts and function, it's enough to delete all rows from them:
-
-```shell
-$ psql chat chat
-psql (14.8 (Homebrew))
-Type "help" for help.
-
-chat=> delete from messages;
-chat=> delete from contexts;
-chat=> delete from model_functions;
-```
+To delete all past interactions, contexts and function, execute the last command again.
 
 # Building
 
@@ -96,16 +50,16 @@ $ mvn clean install
 
 Completions can be asked from both the CLI and from the REST interface.
 
-To use the CLI, define the `OPENAI_API_KEY` environment variable and run the JAR:
+To use the CLI, define the `OPENAI_API_KEY` environment variable and run the CLI:
 
 ```shell
 $ export OPENAI_API_KEY=your-api-key
-$ java --enable-preview -jar chat-ai-main/target/chat-ai-*-jar-with-dependencies.jar
+$ ./cli.sh
 Hit Ctrl-D to exit.
 To save or update context entries, type:
 :context (save|delete) <entry-name> [<entry-value>]
 To save or update functions, type:
-:function (save|delete) <fn-name> [<fn-params-json-schema-file>]
+:function (save|delete) <fn-name> [<fn-descr> <fn-params-json-schema-file>]
 Enjoy!
 > Hello!
 Model> Hello! How can I assist you today?
@@ -114,7 +68,7 @@ Model> Hello! How can I assist you today?
 To use the REST interface, first start the server:
 
 ```shell
-$ java --enable-preview -jar chat-ai-rest/target/quarkus-app/quarkus-run.jar
+$ ./rest.sh
 ```
 
 and then use it:
