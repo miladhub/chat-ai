@@ -40,7 +40,7 @@ To delete all past interactions, contexts and function, execute the last command
 # Building
 
 The project comprises a main module, that includes a command-line interface,
-and a web module, that offers a REST interface. The following commands builds everything:
+and a web module, that offers a REST interface. The following command builds everything:
 
 ```shell
 $ mvn clean install

@@ -28,7 +28,7 @@
                 "description": "The amount to be algebraically added to the stat (it can be also negative)"
               }
             },
-            "required": ["character", "stat", "value"]
+            "required": ["character", "stat", "delta"]
           }
         }
       },
