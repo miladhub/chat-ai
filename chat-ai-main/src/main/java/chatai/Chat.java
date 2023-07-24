@@ -17,7 +17,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Enforcing 4,096 token limit for gpt-3.5-turbo.
+ * Enforcing 4,096 token limit for gpt-3.5-turbo-0613.
  *
  * @see <a href="https://platform.openai.com/docs/models/gpt-3-5"/>
  * @see <a href="https://github.com/knuddelsgmbh/jtokkit"/>

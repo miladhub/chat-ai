@@ -18,7 +18,7 @@ public class HttpUrlConnectionOpenAiClient
 {
     private static final Logger LOG = LoggerFactory.getLogger(OpenAiClient.class);
 
-    private static final String OPENAI_CHAT_MODEL = "gpt-3.5-turbo";
+    private static final String OPENAI_CHAT_MODEL = "gpt-3.5-turbo-0613";
     private static final String OPENAI_EMB_MODEL = "text-embedding-ada-002";
 
     @Override
