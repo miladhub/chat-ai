@@ -1,7 +1,8 @@
 package chatai;
 
 public record OpenAiChoice(
-        OpenAiResponseMessage message
+        OpenAiResponseMessage message,
+        String finish_reason
 )
 {
 }

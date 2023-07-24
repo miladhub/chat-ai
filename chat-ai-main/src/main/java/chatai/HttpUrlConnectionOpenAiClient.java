@@ -62,11 +62,12 @@ public class HttpUrlConnectionOpenAiClient
     public ChatResponse chatCompletion(
             String apiKey,
             List<OpenAiRequestMessage> messages,
-            List<ModelFunction> functions
+            List<ModelFunction> functions,
+            int maxTokens
     )
     throws Exception {
         try (Jsonb jsonb = Json.jsonb()) {
-            String json = toJson(messages, functions);
+            String json = toJson(messages, functions, maxTokens);
             URL url = new URL("https://api.openai.com/v1/chat/completions");
             HttpURLConnection con = (HttpURLConnection) url.openConnection();
             con.setDoOutput(true);
@@ -84,7 +85,11 @@ public class HttpUrlConnectionOpenAiClient
             try (InputStream is = con.getInputStream()) {
                 String res = new String(is.readAllBytes(), UTF_8);
                 OpenAiResponse resp = jsonb.fromJson(res, OpenAiResponse.class);
-                OpenAiResponseMessage msg = resp.choices().get(0).message();
+                OpenAiChoice choice = resp.choices().get(0);
+                if (!"stop".equals(choice.finish_reason()))
+                    LOG.info("Finish reason: " + choice.finish_reason());
+                LOG.debug("Usage: " + resp.usage());
+                OpenAiResponseMessage msg = choice.message();
                 if (msg.function_call() != null)
                     return new ChatResponse.FunctionCallChatResponse(
                             msg.function_call().name(),
@@ -106,7 +111,8 @@ public class HttpUrlConnectionOpenAiClient
 
     private String toJson(
             List<OpenAiRequestMessage> messages,
-            List<ModelFunction> functions
+            List<ModelFunction> functions,
+            int maxTokens
     )
     throws Exception {
         try (Jsonb jsonb = Json.jsonb()) {
@@ -116,11 +122,13 @@ public class HttpUrlConnectionOpenAiClient
                         {
                             "model": "%s",
                             "messages": %s,
-                            "temperature": 0.7
+                            "temperature": 0.7,
+                            "max_tokens": %d
                         }
                         """,
                         OPENAI_CHAT_MODEL,
-                        jsonb.toJson(messages));
+                        jsonb.toJson(messages),
+                        maxTokens);
             } else {
                 return String.format(
                         """
@@ -128,14 +136,16 @@ public class HttpUrlConnectionOpenAiClient
                             "model": "%s",
                             "messages": %s,
                             "functions": %s,
-                            "temperature": 0.7
+                            "temperature": 0.7,
+                            "max_tokens": %d
                         }
                         """,
                         OPENAI_CHAT_MODEL,
                         jsonb.toJson(messages),
                         "[" + functions.stream()
                                 .map(ModelFunction::body)
-                                .collect(Collectors.joining(",\n")) + "]");
+                                .collect(Collectors.joining(",\n")) + "]",
+                        maxTokens);
             }
         }
     }

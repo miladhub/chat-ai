@@ -48,7 +48,7 @@ class ChatTest
             oneOf(client).chatCompletion(
                     OPEN_API_KEY,
                     List.of(new OpenAiRequestMessage(user, "hello")),
-                    List.of());
+                    List.of(), 300);
                 will(returnValue(new ChatResponse.MessageChatResponse("hi")));
         }});
 
@@ -74,7 +74,8 @@ class ChatTest
             oneOf(client).chatCompletion(
                     with(OPEN_API_KEY),
                     with(listNotExceedingLimit()),
-                    with(List.of()));
+                    with(List.of()),
+                    with(any(Integer.class)));
             will(returnValue(new ChatResponse.MessageChatResponse("hi")));
         }});
 
@@ -129,7 +130,8 @@ class ChatTest
                             last_and_most_similar,
                             "hello"
                     )),
-                    with(List.of()));
+                    with(List.of()),
+                    with(any(Integer.class)));
             will(returnValue(new ChatResponse.MessageChatResponse("hi")));
         }});
 

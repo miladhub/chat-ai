@@ -65,6 +65,14 @@ Enjoy!
 Model> Hello! How can I assist you today?
 ```
 
+To debug the CLI:
+
+```shell
+$ java -Dorg.slf4j.simpleLogger.defaultLogLevel=debug \
+  -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 \
+  --enable-preview -jar chat-ai-main/target/chat-ai-*-jar-with-dependencies.jar
+```
+
 To use the REST interface, first start the server:
 
 ```shell

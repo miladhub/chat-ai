@@ -28,9 +28,15 @@ public class Chat
 {
     private static final String OPENAI_API_KEY = System.getenv("OPENAI_API_KEY");
 
-    // While OpenAI allows 4,096 tokens, this project breaks at ~3500
-    // probably due to the token encoder not being OpenAI's
-    private static final int OPENAI_CHAT_MODEL_MAX_TOKENS = 3500;
+    // While OpenAI allows 4,096 tokens, the encoding that we use
+    // here underestimates them; also, we need to take into account
+    // the token consumed by the response, controlled by the
+    // `max_tokens` sent to in the request, equal to 300; so to stay
+    // within boundaries, we are choosing 3000 tokens for the prompt
+    // and 300 for the response.
+    // See https://platform.openai.com/docs/models/gpt-3-5
+    private static final int OPENAI_PROMPT_MAX_TOKENS = 3000;
+    private static final int OPENAI_RESPONSE_MAX_TOKENS = 300;
 
     private static final EncodingRegistry registry =
             Encodings.newDefaultEncodingRegistry();
@@ -45,7 +51,7 @@ public class Chat
         return new Chat(
                 new PgVectorPromptRepository(),
                 new HttpUrlConnectionOpenAiClient(),
-                OPENAI_CHAT_MODEL_MAX_TOKENS);
+                OPENAI_PROMPT_MAX_TOKENS);
     }
 
     public static void main(String[] args)
@@ -125,7 +131,7 @@ public class Chat
 
         List<OpenAiRequestMessage> messages = composeMessages(similar, ctx, prompt);
         List<ModelFunction> functions = repository.functions();
-        ChatResponse response = client.chatCompletion(apiKey, messages, functions);
+        ChatResponse response = client.chatCompletion(apiKey, messages, functions, OPENAI_RESPONSE_MAX_TOKENS);
 
         switch (response) {
             case MessageChatResponse msg -> {

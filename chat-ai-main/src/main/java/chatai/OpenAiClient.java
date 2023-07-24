@@ -12,6 +12,7 @@ public interface OpenAiClient
     ChatResponse chatCompletion(
             String apiKey,
             List<OpenAiRequestMessage> messages,
-            List<ModelFunction> functions
+            List<ModelFunction> functions,
+            int maxTokens
     ) throws Exception;
 }

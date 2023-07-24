@@ -68,4 +68,57 @@ public class JsonTest
                 Arrays.asList(Json.jsonb().fromJson(json,
                         OpenAiRequestMessage[].class)));
     }
+
+    @Test
+    void response_from_json() {
+        //language=JSON
+        String json =
+                """
+                {
+                  "id": "chatcmpl-7fp29q2jX7MEaiu6ic2vjaiEPyrDJ",
+                  "object": "chat.completion",
+                  "created": 1690201977,
+                  "model": "gpt-3.5-turbo-0613",
+                  "choices": [
+                    {
+                      "index": 0,
+                      "message": {
+                        "role": "assistant",
+                        "content": "some response"
+                      },
+                      "finish_reason": "stop"
+                    }
+                  ],
+                  "usage": {
+                    "prompt_tokens": 3736,
+                    "completion_tokens": 361,
+                    "total_tokens": 4097
+                  }
+                }
+                """;
+
+        OpenAiResponse resp = Json.jsonb().fromJson(json,
+                OpenAiResponse.class);
+
+        assertEquals(
+                new OpenAiResponse(
+                        List.of(
+                                new OpenAiChoice(
+                                        new OpenAiResponseMessage(
+                                                Role.assistant,
+                                                "some response",
+                                                null
+                                        ),
+                                        "stop"
+                                )
+                        ),
+                        new OpenAiUsage(
+                                3736,
+                                361,
+                                4097
+                        )
+                ),
+                resp
+        );
+    }
 }
