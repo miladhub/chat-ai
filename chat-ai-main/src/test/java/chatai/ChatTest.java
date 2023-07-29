@@ -46,9 +46,10 @@ class ChatTest
                 will(returnValue(new Embedding(List.of(1f, 2f, 3f))));
 
             oneOf(client).chatCompletion(
-                    OPEN_API_KEY,
-                    List.of(new OpenAiRequestMessage(user, "hello")),
-                    List.of(), 300);
+                    with(OPEN_API_KEY),
+                    with(List.of(new OpenAiRequestMessage(user, "hello"))),
+                    with(List.of()),
+                    with(any(Integer.class)));
                 will(returnValue(new ChatResponse.MessageChatResponse("hi")));
         }});
 

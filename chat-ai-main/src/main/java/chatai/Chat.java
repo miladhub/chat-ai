@@ -36,7 +36,7 @@ public class Chat
     // and 300 for the response.
     // See https://platform.openai.com/docs/models/gpt-3-5
     private static final int OPENAI_PROMPT_MAX_TOKENS = 3000;
-    private static final int OPENAI_RESPONSE_MAX_TOKENS = 300;
+    private static final int OPENAI_RESPONSE_MAX_TOKENS = 500;
 
     private static final EncodingRegistry registry =
             Encodings.newDefaultEncodingRegistry();
